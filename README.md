@@ -39,12 +39,21 @@ Options:
 	--ipv6
 		Make all connections using IPv6.
 
+	--info-only
+		Print stream information such as Video title, Selected quality
+		Stream start time and duration and then exits.
+
 	--add-metadata
 		Write some basic metadata information to the final file.
 
 	--audio-url GOOGLEVIDEO_URL
 		Pass in the given url as the audio fragment url. Must be a
 		Google Video url with an itag parameter of 140.
+
+	--capture-duration DURATION or TIMESTRING
+		Captures a livestream for the specified length of time 
+		and then exits and finalizes the video.
+		Supports time durations (e.g. 1d8h10m) or time strings (e.g. 12:30:05).
 
 	-c
 	--cookies COOKIES_FILE
@@ -86,6 +95,12 @@ Options:
 	--keep-ts-files
 		Keep the final stream audio and video files after muxing them
 		instead of deleting them.
+
+	-l
+	--lookalike-chars
+		Use lookalikes for forbidden characters in the filename output format.
+		Emulates forbidden characters by using the same replacement characters as yt-dlp.
+		This will make the filenames look closer to the original titles.
 
 	--members-only
 		Only download members-only streams. Can only be used with channel URLs
@@ -163,6 +178,10 @@ Options:
 		See FORMAT OPTIONS below for a list of available format keys.
 		Default is '%(title)s-%(id)s'
 
+	--potoken <PO TOKEN>
+		PO Token from your browser, basically required along with cookies these days.
+		Refer to https://github.com/yt-dlp/yt-dlp/wiki/Extractors#po-token-guide
+
 	--proxy <SCHEME>://[<USER>:<PASS>@]<HOST>:<PORT>
 		Specify a proxy to use for downloading. e.g.
 			- socks5://127.0.0.1:1080
@@ -203,6 +222,15 @@ Options:
 		Save the audio to a separate file, similar to when downloading
 		audio_only, alongside the final muxed file. This includes embedding
 		metadata and the thumbnail if set.
+
+	--start-delay DURATION or TIMESTRING
+		Waits for a specified length of time before starting to capture a stream from that time.
+		Supports time durations (e.g. 1d8h10m) or time strings (e.g. 12:30:05).
+		
+		Note: * NOT supported when using also using '--live-from'.
+		      * If the stream is scheduled and has not yet begun then
+		        the delay does not start counting until the stream has begun.
+		      * Ignored when resuming a download.
 
 	-td
 	--temporary-dir DIRECTORY
@@ -268,6 +296,19 @@ Options:
 	--write-thumbnail
 		Write the thumbnail to a separate file.
 
+	--live-from DURATION, TIMESTRING or NOW
+		Starts the download from the specified time in the future, the past or 'now'.
+		Use a negative time value to skip back in time from now.
+		Use a positive time value to specify the timestamp in the stream to start 
+		capturing from (from the start of the stream).
+
+		Supports time durations (e.g. 1d8h30m5s) or time strings (e.g. 32:30:05).
+		Examples: * '--live-from -01:10:00' will seek backwards 1 hour and 10 minutes from now
+					and then start downloading from that time.
+		          * '--live-from 1h10mm00s' will begin downloading from 1 hour 10 minutes 
+				    after the stream started.
+		          * '--live-from now' will start recording from the current stream time.
+
 Examples:
 	ytarchive -w
 		Waits for a stream. Will prompt for a URL and quality.
@@ -317,7 +358,8 @@ FORMAT TEMPLATE OPTIONS
 	youtube-dl. See https://github.com/ytdl-org/youtube-dl#output-template
 
 	For file names, each template substitution is sanitized by replacing invalid file name
-	characters with underscore (_).
+	characters with an underscore (_). If '--lookalike-chars' is used, invalid file name
+	characters get replaced by the same lookalike characters that yt-dlp uses instead.
 
 	id (string): Video identifier
 	url (string): Video URL

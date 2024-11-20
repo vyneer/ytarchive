@@ -26,7 +26,7 @@ const (
 
 const (
 	MajorVersion = 0
-	MinorVersion = 4
+	MinorVersion = 5
 	PatchVersion = 0
 )
 
@@ -76,6 +76,11 @@ Options:
 		Pass in the given url as the audio fragment url. Must be a
 		Google Video url with an itag parameter of 140.
 
+	--capture-duration DURATION or TIMESTRING
+		Captures a livestream for the specified length of time 
+		and then exits and finalizes the video.
+		Supports time durations (e.g. 1d8h10m) or time strings (e.g. 01:30:00).
+
 	-c
 	--cookies COOKIES_FILE
 		Give a cookies.txt file that has your youtube cookies. Allows
@@ -116,6 +121,12 @@ Options:
 	--keep-ts-files
 		Keep the final stream audio and video files after muxing them
 		instead of deleting them.
+
+	-l
+	--lookalike-chars
+		Use lookalikes for forbidden characters in the filename output format.
+		Emulates forbidden characters by using the same replacement characters as yt-dlp.
+		This will make the filenames look closer to the original titles.
 
 	--members-only
 		Only download members-only streams. Can only be used with channel URLs
@@ -193,6 +204,10 @@ Options:
 		See FORMAT OPTIONS below for a list of available format keys.
 		Default is '%[3]s'
 
+	--potoken <PO TOKEN>
+		PO Token from your browser, basically required along with cookies these days.
+		Refer to https://github.com/yt-dlp/yt-dlp/wiki/Extractors#po-token-guide
+
 	--proxy <SCHEME>://[<USER>:<PASS>@]<HOST>:<PORT>
 		Specify a proxy to use for downloading. e.g.
 			- socks5://127.0.0.1:1080
@@ -233,6 +248,15 @@ Options:
 		Save the audio to a separate file, similar to when downloading
 		audio_only, alongside the final muxed file. This includes embedding
 		metadata and the thumbnail if set.
+
+	--start-delay DURATION or TIMESTRING
+		Waits for a specified length of time before starting to capture a stream.
+		Supports time durations (e.g. 1d8h10m) or time strings (e.g. 01:30:00).
+		
+		Note: * NOT supported when using also using '--live-from'.
+		      * If the stream is scheduled and has not yet begun then
+		        the delay does not start counting until the stream has begun.
+		      * Ignored when resuming a download.
 
 	-td
 	--temporary-dir DIRECTORY
@@ -298,6 +322,19 @@ Options:
 	--write-thumbnail
 		Write the thumbnail to a separate file.
 
+	--live-from DURATION, TIMESTRING or NOW
+		Starts the download from the specified time in the future, the past or 'now'.
+		Use a negative time value to skip back in time from now.
+		Use a positive time value to specify the timestamp in the stream to start 
+		capturing from (from the start of the stream).
+
+		Supports time durations (e.g. 1d8h30m5s) or time strings (e.g. 32:30:05).
+		Examples: * '--live-from -01:10:00' will seek backwards 1 hour and 10 minutes from now
+					and then start downloading from that time.
+		          * '--live-from 1h10mm00s' will begin downloading from 1 hour 10 minutes 
+				    after the stream started.
+		          * '--live-from now' will start recording from the current stream time.
+	
 Examples:
 	%[1]s -w
 		Waits for a stream. Will prompt for a URL and quality.
@@ -347,7 +384,8 @@ FORMAT TEMPLATE OPTIONS
 	youtube-dl. See https://github.com/ytdl-org/youtube-dl#output-template
 
 	For file names, each template substitution is sanitized by replacing invalid file name
-	characters with underscore (_).
+	characters with an underscore (_). If '--lookalike-chars' is used, invalid file name
+	characters get replaced by the same lookalike characters that yt-dlp uses instead.
 
 	id (string): Video identifier
 	url (string): Video URL
@@ -368,13 +406,17 @@ FORMAT TEMPLATE OPTIONS
 var (
 	cliFlags          *flag.FlagSet
 	info              *DownloadInfo
+	proxyUrl          *url.URL
 	cookieFile        string
 	fnameFormat       string
 	gvAudioUrl        string
 	gvVideoUrl        string
 	tempDir           string
 	ffmpegPath        string
-	proxyUrl          *url.URL
+	liveFrom          string
+	startDelayStr     string
+	capDurationStr    string
+	poToken           string
 	threadCount       uint
 	fragMaxTries      uint
 	filePerms         uint
@@ -415,6 +457,7 @@ var (
 	h264              bool
 	membersOnly       bool
 	disableSaveState  bool
+	lookalikeChars    bool
 
 	cancelled = false
 )
@@ -464,6 +507,8 @@ func init() {
 	cliFlags.BoolVar(&statusNewlines, "newline", false, "Write progress to a new line instead of keeping it on one line.")
 	cliFlags.BoolVar(&keepTSFiles, "k", false, "Keep the raw .ts files instead of deleting them after muxing.")
 	cliFlags.BoolVar(&keepTSFiles, "keep-ts-files", false, "Keep the raw .ts files instead of deleting them after muxing.")
+	cliFlags.BoolVar(&lookalikeChars, "l", false, "Use lookalike replacement characters in place of forbidden characters.")
+	cliFlags.BoolVar(&lookalikeChars, "lookalike-chars", false, "Use lookalike replacement characters in place of forbidden characters.")
 	cliFlags.BoolVar(&separateAudio, "separate-audio", false, "Save a copy of the audio separately along with the muxed file.")
 	cliFlags.BoolVar(&monitorChannel, "monitor-channel", false, "Continually monitor a channel for streams.")
 	cliFlags.BoolVar(&membersOnly, "members-only", false, "Only download members-only streams when waiting on a channel URL such as /live.")
@@ -475,6 +520,10 @@ func init() {
 	cliFlags.StringVar(&tempDir, "td", "", "Temporary directory for downloading files.")
 	cliFlags.StringVar(&tempDir, "temporary-dir", "", "Temporary directory for downloading files.")
 	cliFlags.StringVar(&ffmpegPath, "ffmpeg-path", "ffmpeg", "Specify a custom ffmpeg program location, including program name.")
+	cliFlags.StringVar(&liveFrom, "live-from", "", "Starts the download from the specified time instead of from the start.")
+	cliFlags.StringVar(&startDelayStr, "start-delay", "", "Waits for a specified length of time before starting to capture a stream.")
+	cliFlags.StringVar(&capDurationStr, "capture-duration", "", "Captures the livestream for the specified length of time and then exits automatically.")
+	cliFlags.StringVar(&poToken, "potoken", "", "PO Token from your browser")
 	cliFlags.IntVar(&retrySecs, "r", 0, "Seconds to wait between checking stream status.")
 	cliFlags.IntVar(&retrySecs, "retry-stream", 0, "Seconds to wait between checking stream status.")
 	cliFlags.UintVar(&threadCount, "threads", 1, "Number of download threads for each stream type.")
@@ -554,6 +603,8 @@ func run() int {
 	info.FileMode = os.FileMode(filePerms)
 	info.DirMode = os.FileMode(dirPerms)
 	info.DisableSaveState = disableSaveState
+	info.LiveFromVal = liveFrom
+	info.PoToken = poToken
 
 	if doWait {
 		info.Wait = ActionDo
@@ -622,6 +673,11 @@ func run() int {
 		info.SetDownloadUrl(DtypeAudio, gvAudioUrl)
 	}
 
+	if monitorChannel && cliFlags.NArg() < 2 {
+		LogError("You must specify a channel AND quality when choosing to monitor a channel")
+		return 1
+	}
+
 	if len(info.URL) == 0 {
 		if cliFlags.NArg() > 1 {
 			info.URL = cliFlags.Arg(0)
@@ -639,7 +695,7 @@ func run() int {
 		return 1
 	}
 
-	_, err = FormatFilename(fnameFormat, info.FormatInfo)
+	_, err = FormatFilename(fnameFormat, info.FormatInfo, lookalikeChars)
 	if err != nil {
 		LogError(err.Error())
 		return 1
@@ -656,8 +712,36 @@ func run() int {
 		LogInfo("Loaded cookie file %s", cookieFile)
 	}
 
+	if startDelayStr != "" {
+		// Not supported when also using --live-from
+		if liveFrom != "" {
+			LogError("You cannot use both --start-delay and --live-from at the same time.")
+			return 1
+		}
+
+		err = info.ParseStartDelayStrVal(startDelayStr)
+		if err != nil {
+			return 1
+		}
+	}
+
+	if capDurationStr != "" {
+		err = info.ParseCaptureDurationStrVal(capDurationStr)
+		if err != nil {
+			return 1
+		}
+		LogGeneral("Downloading a minimum of %s of content and then exiting...", SecondsToDurationAndTimeStr(info.CaptureDurationSecs))
+	}
+
 	if !info.GVideoDDL && !info.GetVideoInfo() {
 		return 1
+	}
+
+	if liveFrom != "" {
+		err = info.ParseLiveFromStrVal()
+		if err != nil {
+			return 1
+		}
 	}
 
 	info.DLState[AudioItag] = &DownloadState{}
@@ -665,7 +749,7 @@ func run() int {
 	audioOnly = info.Quality == AudioOnlyQuality
 
 	// We checked if there would be errors earlier, should be good
-	fullFPath, _ := FormatFilename(fnameFormat, info.FormatInfo)
+	fullFPath, _ := FormatFilename(fnameFormat, info.FormatInfo, lookalikeChars)
 	fdir := filepath.Dir(fullFPath)
 	tmpDir := ""
 	var absDir string
@@ -683,7 +767,7 @@ func run() int {
 	}
 
 	fname := filepath.Base(fullFPath)
-	fname = SterilizeFilename(fname)
+	fname = SterilizeFilename(fname, lookalikeChars)
 
 	if strings.HasPrefix(fname, "-") {
 		fname = "_" + fname
@@ -731,8 +815,18 @@ func run() int {
 				err = json.Unmarshal(stateData, info.DLState[info.Quality])
 			}
 			if err == nil && len(tmpDir) == 0 {
-				tmpDir = info.DLState[AudioItag].TempDir
+				tmpDir = info.DLState[info.Quality].TempDir
 			}
+		}
+	}
+
+	// --start-delay, do not process if resuming a download.
+	if info.StartDelaySecs != 0 && (info.DLState[AudioItag].Fragments != 0 || info.DLState[info.Quality].Fragments != 0) {
+		LogWarn("Option --start-delay is being ignored as a download is being resumed.")
+	} else {
+		if !info.WaitForStartDelay() {
+			LogError("Got an error when re-grabbing video info after the delay period elapsed. Exiting.")
+			return 1
 		}
 	}
 
